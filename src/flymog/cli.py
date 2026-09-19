@@ -118,7 +118,14 @@ def fetch_data(
 
     target = data_dir() / "connectome"
     report = reachability_report()
-    present = {src.key: (target / src.filename).exists() for src in KNOWN_SOURCES}
+    # Accept either spelling for the annotation table, since FlyWire publishes
+    # it as TSV while the connectivity dumps are CSV.
+    present = {
+        src.key: (target / src.filename).exists()
+        or (target / (Path(src.filename).stem + ".csv")).exists()
+        or (target / (Path(src.filename).stem + ".tsv")).exists()
+        for src in KNOWN_SOURCES
+    }
 
     table = Table(title="Data sources")
     table.add_column("key")
@@ -245,7 +252,12 @@ def probe_bridge_cmd(
     table.add_row("verdict", payload["verdict"])
     console.print(table)
     console.print(f"[bold]{payload['recommendation']}[/bold]")
-    console.print(f"Wiring: [bold]{payload['wiring']}[/bold]. {payload['wiring_note']}")
+    console.print(
+        f"Wiring: [bold]{payload['wiring']}[/bold] "
+        f"({payload['n_matched_neurons_in_projection_classes']} of "
+        f"{payload['stats']['n_flywire_neurons_reached']} matched neurons are "
+        f"projection or central)."
+    )
     _emit(payload, "probe_bridge", output)
 
 
@@ -317,9 +329,20 @@ def sweep_regime_cmd(
     connectome = _load_connectome(surrogate, surrogate_neurons, surrogate_edges)
     payload = sweep_regime(connectome, cfg.lif, batch=batch)
     _warn_if_surrogate(payload)
-    for key in ("resolution_warning", "saturation_warning"):
-        if payload.get(key):
-            console.print(f"[yellow]{payload[key]}[/yellow]")
+    if payload["distinguishable_levels_in_band"] < 20:
+        console.print(
+            f"[yellow]The window resolves rates only to "
+            f"{payload['rate_resolution_hz']} Hz, about "
+            f"{payload['distinguishable_levels_in_band']:.0f} distinct levels across "
+            f"the target band. Lengthen the window or average over trials.[/yellow]"
+        )
+    if payload["participation_ratio_saturated"]:
+        console.print(
+            f"[yellow]Participation ratio sits at its ceiling of "
+            f"{payload['participation_ratio_ceiling']:.0f} (batch {payload['batch']}) "
+            f"at every swept point, so it cannot rank them. The chosen point is "
+            f"arbitrary until you re-run with a much larger batch.[/yellow]"
+        )
 
     table = Table(title="Regime sweep")
     for column in ("gain", "weight scale", "responsive", "mean Hz", "max Hz", "PR", "in band"):

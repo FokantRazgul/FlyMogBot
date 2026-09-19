@@ -9,11 +9,12 @@ manual instructions naming the blocked host.
 from __future__ import annotations
 
 import csv
-import json
-import socket
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import numpy as np
 
@@ -53,13 +54,18 @@ KNOWN_SOURCES: tuple[DataSource, ...] = (
     ),
     DataSource(
         key="flywire_annotations",
-        filename="flywire_neurons.csv",
+        filename="flywire_neurons.tsv",
         url="https://github.com/flyconnectome/flywire_annotations",
         description=(
             "Per-neuron annotations: cell type, super class, side, position. "
-            "Reachable over git from this environment, unlike the Zenodo dump."
+            "Clonable over git even where web access is denied. The file wanted "
+            "is supplemental_files/Supplemental_file1_neuron_annotations.tsv."
         ),
-        license_note="TODO(verify) the repository's own data license.",
+        license_note=(
+            "No LICENSE file in the repository. Its README asks to cite Berg et al. "
+            "(2025), Schlegel et al. (2024), Matsliah et al. (2024) and Dorkenwald "
+            "et al. (2024). TODO(verify) the license itself."
+        ),
     ),
     DataSource(
         key="flyvis_pretrained",
@@ -75,20 +81,31 @@ KNOWN_SOURCES: tuple[DataSource, ...] = (
 )
 
 
-def host_is_reachable(url: str, timeout: float = 8.0) -> tuple[bool, str]:
-    """Best-effort check of whether a host can be opened at all.
+def host_is_reachable(url: str, timeout: float = 15.0) -> tuple[bool, str]:
+    """Can this URL be opened through the normal, proxied path?
 
-    A blocked CONNECT shows up as a refused or reset connection through the
-    proxy, which we report rather than retry.
+    Deliberately uses urllib, which honours the HTTPS_PROXY environment, rather
+    than a raw socket. A raw socket would bypass a configured egress proxy and
+    report a host as reachable that policy actually denies, which is both wrong
+    and an invitation to route around the policy. A denial is reported, never
+    retried and never worked around.
     """
     parsed = urlparse(url)
-    host = parsed.hostname
-    if not host:
+    if not parsed.hostname:
         return False, "could not parse a hostname out of the URL"
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+    request = Request(url, method="HEAD", headers={"User-Agent": "flymog/0.1"})
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True, "direct TCP connection succeeded"
+        with urlopen(request, timeout=timeout) as response:
+            return True, f"HTTP {response.status} through the configured proxy"
+    except HTTPError as exc:
+        # The host answered. 403 or 407 from a proxy is a policy denial; any
+        # other status still proves the host is reachable.
+        if exc.code in {403, 407}:
+            return False, f"HTTP {exc.code}: denied by the egress policy, not by the host"
+        return True, f"HTTP {exc.code} through the configured proxy"
+    except URLError as exc:
+        return False, f"{type(exc.reason).__name__ if exc.reason else 'URLError'}: {exc.reason}"
     except OSError as exc:
         return False, f"{type(exc).__name__}: {exc}"
 
@@ -130,8 +147,7 @@ def _resolve_columns(
     if missing:
         raise ConnectomeDataMissing(
             f"columns {sorted(missing)} not found in header {header}. "
-            f"Accepted spellings: "
-            + ", ".join(f"{k}={aliases[k]}" for k in sorted(missing))
+            f"Accepted spellings: " + ", ".join(f"{k}={aliases[k]}" for k in sorted(missing))
         )
     return resolved
 
@@ -428,17 +444,44 @@ def ensure_connectome(
     raise ConnectomeDataMissing(manual_instructions(missing, target_dir))
 
 
+def git_clone_available(url: str, timeout: float = 60.0) -> tuple[bool, str]:
+    """Can this repository be read over the git protocol?
+
+    Web access and git access are governed separately: an environment can deny
+    HTTPS browsing of github.com while still allowing ``git``. That distinction
+    decides what the operator has to do, so it is checked rather than assumed.
+    """
+    if "github.com" not in urlparse(url).netloc:
+        return False, "not a GitHub URL"
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", url],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    if result.returncode == 0:
+        return True, "git ls-remote succeeded, the repository can be cloned"
+    return False, f"git ls-remote exited {result.returncode}: {result.stderr.strip()[:160]}"
+
+
 def reachability_report() -> list[dict]:
-    """Check every known source host and report what this environment can open."""
+    """Check every known source and report what this environment can actually get."""
     report = []
     for src in KNOWN_SOURCES:
-        ok, detail = host_is_reachable(src.url)
+        web_ok, web_detail = host_is_reachable(src.url)
+        git_ok, git_detail = git_clone_available(src.url)
         report.append(
             {
                 "key": src.key,
                 "url": src.url,
-                "reachable": ok,
-                "detail": detail,
+                "reachable": bool(web_ok or git_ok),
+                "web_reachable": web_ok,
+                "git_reachable": git_ok,
+                "detail": (git_detail if git_ok else f"web: {web_detail}; git: {git_detail}"),
                 "license_note": src.license_note,
             }
         )
