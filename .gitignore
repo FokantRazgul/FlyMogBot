@@ -1,9 +1,10 @@
 # Secrets
 .env
 
-# Large data and artifacts: never committed (brief section 4)
-data/
-artifacts/
+# Large data and artifacts: never committed (brief section 4).
+# Anchored to the repository root so that src/flymog/data/ is NOT ignored.
+/data/
+/artifacts/
 
 # Python
 __pycache__/
