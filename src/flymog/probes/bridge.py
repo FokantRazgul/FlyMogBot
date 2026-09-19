@@ -208,22 +208,9 @@ def probe_bridge(
     # under `optic`, not `visual_projection`. Treating them as projection
     # neurons would skip the optic lobe's own wiring; injecting into the
     # matching FlyWire optic neurons and letting FlyWire route onward does not.
-    if projection_share >= 0.5:
-        wiring = "as_projection_neurons"
-        wiring_note = (
-            "Most matched neurons are projection neurons, so flyvis outputs can be "
-            "treated as the projection stage directly."
-        )
-    else:
-        wiring = "inject_into_matching_optic_neurons"
-        wiring_note = (
-            f"Only {n_projection} of {n_matched_neurons} matched neurons "
-            f"({projection_share:.1%}) are projection or central neurons; the rest are "
-            "intrinsic optic-lobe cells. Do not treat flyvis outputs as visual "
-            "projection neurons. Inject flyvis activity into the FlyWire neurons of "
-            "the matching types and let FlyWire's own connectivity carry it to the "
-            "projection neurons and the central brain."
-        )
+    wiring = (
+        "as_projection_neurons" if projection_share >= 0.5 else "inject_into_matching_optic_neurons"
+    )
 
     go = stats["coverage"] >= BRIDGE_GO_THRESHOLD
     return {
@@ -232,7 +219,6 @@ def probe_bridge(
         "n_matched_neurons_in_projection_classes": n_projection,
         "projection_share_of_matched_neurons": round(projection_share, 4),
         "wiring": wiring,
-        "wiring_note": wiring_note,
         "flyvis_type_source": source,
         "is_surrogate": connectome.is_surrogate,
         "surrogate_warning": (
@@ -248,7 +234,13 @@ def probe_bridge(
         "go_threshold": BRIDGE_GO_THRESHOLD,
         "verdict": "go" if go else "no-go",
         "recommendation": (
-            "Bridge is viable: wire the matched types into the central brain."
+            (
+                "Bridge is viable: flyvis outputs can be treated as the projection stage directly."
+                if wiring == "as_projection_neurons"
+                else "Bridge is viable, but flyvis outputs are not projection "
+                "neurons. Inject into the matching FlyWire optic neurons and let "
+                "FlyWire's own connectivity carry the signal onward."
+            )
             if go
             else "Bridge coverage is below threshold. Put the readout directly on "
             "flyvis activity and record this in docs/SCIENCE.md."

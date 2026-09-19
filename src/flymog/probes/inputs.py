@@ -150,7 +150,8 @@ def estimate_columns(positions: np.ndarray, max_clusters: int = 1000) -> int | N
 
     Uses nearest-neighbour spacing: cells belonging to one column sit much
     closer together than neighbouring columns do. Returns ``None`` when there is
-    not enough data to say anything.
+    not enough data to say anything, or when the grouping runs past
+    ``max_clusters`` and so has not found column structure at all.
     """
     if positions is None or positions.shape[0] < 10:
         return None
@@ -183,7 +184,11 @@ def estimate_columns(positions: np.ndarray, max_clusters: int = 1000) -> int | N
         if ra != rb:
             parent[rb] = ra
     groups = len({find(i) for i in range(finite.shape[0])})
-    return min(groups, max_clusters)
+    if groups >= max_clusters:
+        # Hitting the cap means the grouping did not converge on anything
+        # column-like. Returning the cap would look like a measurement.
+        return None
+    return groups
 
 
 def probe_input_cells(connectome: Connectome) -> dict[str, Any]:

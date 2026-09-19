@@ -114,24 +114,8 @@ def sweep_regime(
         "batch": batch,
         "participation_ratio_ceiling": pr_ceiling,
         "participation_ratio_saturated": pr_saturated,
-        "saturation_warning": (
-            f"Participation ratio is at or near its ceiling of {pr_ceiling:.0f} "
-            f"(batch {batch}) at every swept point, so it cannot rank them. Re-run "
-            "with a batch well above the number of dimensions you expect the "
-            "features to carry, or the chosen operating point is arbitrary."
-            if pr_saturated
-            else None
-        ),
         "rate_resolution_hz": round(resolution_hz, 3),
         "distinguishable_levels_in_band": round(distinguishable_levels, 1),
-        "resolution_warning": (
-            f"The {cfg.window_ms:.0f} ms window resolves rates only to "
-            f"{resolution_hz:.1f} Hz, giving about {distinguishable_levels:.0f} "
-            "distinct levels across the target band. Lengthen the window or "
-            "average over trials before reading much into these rates."
-            if distinguishable_levels < 20
-            else None
-        ),
         "is_surrogate": connectome.is_surrogate,
         "surrogate_warning": (
             "Swept on the SURROGATE connectome. The chosen operating point is "

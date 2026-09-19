@@ -26,6 +26,79 @@ PROBES: dict[str, tuple[str, str]] = {
 
 _MISSING = "_Не заполнено._ Запусти `{command}` на машине с целевым железом."
 
+# Probe payloads are English, because they are code. The report is Russian,
+# because it is read by the operator. Unknown strings pass through unchanged
+# rather than being dropped, so a new verdict is visibly untranslated instead of
+# silently missing.
+_PHRASES: dict[str, str] = {
+    "absent: no cells of these types in the annotations": (
+        "отсутствует: клеток этих типов нет в аннотациях"
+    ),
+    "present but without positions: columns cannot be assigned spatially": (
+        "есть, но без координат: колонки нельзя назначить пространственно"
+    ),
+    "usable: counts are consistent with one cell per column per eye": (
+        "годится: количества соответствуют одной клетке на колонку на глаз"
+    ),
+    (
+        "present but counts do not look one-per-column; "
+        "check annotation completeness before relying on it"
+    ): (
+        "есть, но количества не похожи на одну клетку на колонку; "
+        "проверь полноту аннотаций, прежде чем полагаться"
+    ),
+    "Use the 'photoreceptors' rung as the connectome entry point.": (
+        "Использовать ступень «фоторецепторы» как вход в коннектом."
+    ),
+    "Use the 'lamina_monopolar' rung as the connectome entry point.": (
+        "Использовать ступень «монополярные ламины» как вход в коннектом."
+    ),
+    "Use the 'medulla_columnar' rung as the connectome entry point.": (
+        "Использовать ступень «колончатые медуллы» как вход в коннектом."
+    ),
+    ("No rung is usable as-is. Fall back to flyvis for the visual front end."): (
+        "Ни одна ступень не годится как есть. Зрительный вход берём из flyvis."
+    ),
+    ("Bridge is viable: flyvis outputs can be treated as the projection stage directly."): (
+        "Мост работоспособен: выходы flyvis можно считать проекционной стадией."
+    ),
+    (
+        "Bridge is viable, but flyvis outputs are not projection neurons. "
+        "Inject into the matching FlyWire optic neurons and let FlyWire's own "
+        "connectivity carry the signal onward."
+    ): (
+        "Мост работоспособен, но выходы flyvis — не проекционные нейроны. "
+        "Вливаем в совпавшие нейроны оптической доли FlyWire и даём связям "
+        "FlyWire нести сигнал дальше."
+    ),
+    (
+        "Bridge coverage is below threshold. Put the readout directly on "
+        "flyvis activity and record this in docs/SCIENCE.md."
+    ): (
+        "Покрытие моста ниже порога. Ставим readout прямо на активность flyvis "
+        "и фиксируем это в docs/SCIENCE.md."
+    ),
+    "target met by at least one configuration": ("цель достигнута хотя бы одной конфигурацией"),
+    "target not met by any configuration measured here": (
+        "ни одна измеренная конфигурация не вышла на цель"
+    ),
+    "found an operating point inside the target rate band": (
+        "найдена рабочая точка внутри целевой полосы частот"
+    ),
+    "no swept point kept rates inside the target band; widen the sweep": (
+        "ни одна точка развёртки не удержала частоты в целевой полосе; расширь развёртку"
+    ),
+    "go": "go",
+    "no-go": "no-go",
+}
+
+
+def _ru(text: str | None) -> str:
+    """Translate a known probe phrase, or pass it through untouched."""
+    if text is None:
+        return "—"
+    return _PHRASES.get(text.strip(), text)
+
 
 def _load(source: Path) -> tuple[dict[str, Any], list[str], list[str]]:
     loaded: dict[str, Any] = {}
@@ -127,9 +200,9 @@ def _inputs_section(data: dict[str, Any]) -> str:
             f"| {rung['name']} | {rung['total_cells']} | "
             f"{'да' if rung['has_positions'] else 'нет'} | "
             f"{rung['estimated_columns'] if rung['estimated_columns'] is not None else '—'} | "
-            f"{rung['verdict']} |"
+            f"{_ru(rung['verdict'])} |"
         )
-    lines += ["", f"**{probe['recommendation']}**"]
+    lines += ["", f"**{_ru(probe['recommendation'])}**"]
     return "\n".join(lines)
 
 
@@ -153,10 +226,45 @@ def _bridge_section(data: dict[str, Any]) -> str:
         f"| Порог go/no-go | {probe['go_threshold']:.1%} |",
         f"| Нейронов FlyWire достигнуто | {stats['n_flywire_neurons_reached']} |",
         f"| По типу совпадения | {json.dumps(stats['matches_by_kind'], ensure_ascii=False)} |",
-        f"| **Вердикт** | **{probe['verdict']}** |",
+        f"| Из них проекционных или центральных | "
+        f"{probe.get('n_matched_neurons_in_projection_classes', '—')} |",
+        f"| **Вердикт** | **{_ru(probe['verdict'])}** |",
         "",
-        f"**{probe['recommendation']}**",
+        f"**{_ru(probe['recommendation'])}**",
     ]
+    wiring = probe.get("wiring")
+    if wiring:
+        n_proj = probe.get("n_matched_neurons_in_projection_classes", 0)
+        n_all = probe["stats"]["n_flywire_neurons_reached"]
+        share = probe.get("projection_share_of_matched_neurons", 0.0)
+        if wiring == "as_projection_neurons":
+            note = (
+                f"Большинство совпавших нейронов ({n_proj} из {n_all}) — проекционные, "
+                "поэтому выходы flyvis можно считать проекционной стадией напрямую."
+            )
+        else:
+            note = (
+                f"Проекционных или центральных среди совпавших нейронов всего {n_proj} "
+                f"из {n_all} ({share:.1%}), остальные — внутренние нейроны оптической "
+                "доли. Выходы flyvis нельзя считать зрительными проекционными "
+                "нейронами. Вливать активность flyvis надо в нейроны FlyWire тех же "
+                "типов, а дальше пусть связи FlyWire сами доносят сигнал до "
+                "проекционных нейронов и центрального мозга."
+            )
+        lines += ["", f"Схема подключения: `{wiring}`.", "", f"> {note}"]
+    classes = probe.get("matched_neuron_super_classes")
+    if classes:
+        lines += [
+            "",
+            "Суперклассы совпавших нейронов:",
+            "",
+            "| Суперкласс | Нейронов |",
+            "|---|---:|",
+            *[
+                f"| `{name}` | {count} |"
+                for name, count in sorted(classes.items(), key=lambda kv: -kv[1])
+            ],
+        ]
     unmatched = stats.get("unmatched_flyvis_types") or []
     if unmatched:
         shown = ", ".join(f"`{t}`" for t in unmatched[:25])
@@ -187,7 +295,7 @@ def _speed_section(data: dict[str, Any]) -> str:
             f"{row['ms_per_step']:.2f} | {row['seconds_per_window']:.2f} | "
             f"{row['images_per_second']:.3f} | {'да' if row['meets_target'] else 'нет'} |"
         )
-    lines += ["", f"**{bench['verdict']}**"]
+    lines += ["", f"**{_ru(bench['verdict'])}**"]
 
     pruning = bench.get("pruning")
     if pruning:
@@ -227,9 +335,24 @@ def _regime_section(data: dict[str, Any]) -> str:
         f"Целевой диапазон частот: {sweep['target_rate_hz'][0]}–{sweep['target_rate_hz'][1]} Гц. "
         f"Критерий выбора: {sweep['criterion']}.",
     ]
-    for key in ("resolution_warning", "saturation_warning"):
-        if sweep.get(key):
-            lines += ["", f"> {sweep[key]}"]
+    levels = sweep.get("distinguishable_levels_in_band")
+    if levels is not None and levels < 20:
+        lines += [
+            "",
+            f"> Окно разрешает частоты лишь до {sweep['rate_resolution_hz']} Гц, то есть "
+            f"около {levels:.0f} различимых уровней на всю целевую полосу. Прежде чем "
+            "делать выводы по этим частотам, удлини окно или усредни по нескольким "
+            "триалам.",
+        ]
+    if sweep.get("participation_ratio_saturated"):
+        lines += [
+            "",
+            f"> **Критерий вырожден.** Participation ratio упирается в свой потолок "
+            f"{sweep['participation_ratio_ceiling']:.0f} (батч {sweep['batch']}) во всех "
+            "точках развёртки, поэтому ранжировать их он не может. Выбранная точка "
+            "произвольна, пока развёртка не будет повторена с существенно большим "
+            "батчем.",
+        ]
     lines += [
         "",
         "| Gain | Масштаб весов | Отвечают | Средняя Гц | Макс Гц | PR | В полосе |",
@@ -243,7 +366,7 @@ def _regime_section(data: dict[str, Any]) -> str:
             f"{row['max_rate_hz']:.1f} | {pr} | {'да' if row['in_target_band'] else 'нет'} |"
         )
     chosen = sweep.get("chosen")
-    lines += ["", f"**{sweep['verdict']}**"]
+    lines += ["", f"**{_ru(sweep['verdict'])}**"]
     if chosen:
         lines += [
             "",
@@ -256,6 +379,13 @@ def _regime_section(data: dict[str, Any]) -> str:
 
 
 def _verdict_section(data: dict[str, Any], missing: list[str]) -> str:
+    """Build the go/no-go verdict.
+
+    A verdict is only allowed to read as clean when nothing outstanding is
+    known. Missing data, surrogate-derived numbers and a degenerate selection
+    criterion are all caveats that have to appear here, not only deeper in the
+    report where they are easy to miss.
+    """
     if missing:
         return (
             "**Go/no-go пока не вынесен.** Не хватает результатов: "
@@ -263,16 +393,45 @@ def _verdict_section(data: dict[str, Any], missing: list[str]) -> str:
             + ".\n\nРешение принимается после того, как эти команды отработают на "
             "целевом железе с настоящими данными."
         )
+
     bridge = data.get("probe_bridge", {})
     bench = data.get("bench_sim", {})
-    blockers = []
+    sweep = data.get("sweep_regime", {})
+    fetch = data.get("fetch_data", {})
+
+    blockers: list[str] = []
     if bridge.get("ran") and bridge.get("verdict") == "no-go":
         blockers.append("мост flyvis → FlyWire не набрал порог покрытия")
     if bench and bench.get("n_configurations_meeting_target", 0) == 0:
         blockers.append("ни одна конфигурация не вышла на целевую скорость")
+
+    caveats: list[str] = []
+    if fetch and not fetch.get("all_present", True):
+        absent = [k for k, v in (fetch.get("present") or {}).items() if not v]
+        caveats.append("не загружены данные: " + ", ".join(f"`{k}`" for k in absent))
+    if any(isinstance(payload, dict) and payload.get("is_surrogate") for payload in data.values()):
+        caveats.append(
+            "часть измерений снята на синтетическом суррогате, а не на настоящем коннектоме"
+        )
+    if sweep.get("participation_ratio_saturated"):
+        caveats.append("критерий выбора режима вырожден, выбранная рабочая точка произвольна")
+    pruning = (bench or {}).get("pruning")
+    if pruning and pruning.get("neuron_reduction", 1.0) < 0.05:
+        caveats.append("обрезка графа не даёт экономии и как ступень ускорения не годится")
+
     if blockers:
-        return "**Go с оговорками.** Требуют решения: " + "; ".join(blockers) + "."
-    return "**Go.** Блокирующих находок нет."
+        text = "**No-go до устранения.** " + "; ".join(blockers) + "."
+    elif caveats:
+        text = (
+            "**Go, но с открытыми вопросами.** Блокирующих находок нет, однако "
+            "нерешённым остаётся следующее."
+        )
+    else:
+        text = "**Go.** Блокирующих находок нет."
+
+    if caveats:
+        text += "\n\n" + "\n".join(f"- {c}" for c in caveats)
+    return text
 
 
 def build_m0_report(source: Path) -> tuple[str, list[str], list[str]]:
