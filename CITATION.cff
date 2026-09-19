@@ -1,0 +1,57 @@
+cff-version: 1.2.0
+title: FlyMog
+message: >-
+  FlyMog is an entertainment project. If you use the code, cite it as software.
+  The scientific work it builds on is listed under references and must be cited
+  separately.
+type: software
+authors:
+  - name: FlyMog contributors
+repository-code: "https://github.com/FokantRazgul/FlyMogBot"
+license: MIT
+
+# TODO(verify): every reference below was identified from search results and
+# package metadata, not from the published article itself, because the hosts
+# serving them are blocked by this environment's egress policy. Confirm authors,
+# titles, years, DOIs and volume numbers against the publisher before citing.
+references:
+  - type: article
+    title: >-
+      Connectome-constrained networks predict neural activity across the fly
+      visual system
+    journal: Nature
+    year: 2024
+    notes: >-
+      Lappalainen et al. The flyvis model used as FlyMog's visual front end.
+      TODO(verify) full author list, volume, pages and DOI.
+    authors:
+      - name: "TODO(verify) full author list"
+
+  - type: software
+    title: flyvis
+    repository-code: "https://github.com/TuragaLab/flyvis"
+    license: MIT
+    notes: >-
+      Verified: MIT license classifier in the project's pyproject.toml, version
+      1.2.0 on PyPI, requires Python >=3.9,<3.13.
+    authors:
+      - name: Turaga Lab
+
+  - type: generic
+    title: FlyWire FAFB adult Drosophila brain connectome
+    notes: >-
+      TODO(verify) which publications to cite (candidates seen in search
+      results: Dorkenwald et al. 2024, Schlegel et al. 2024) and under which
+      license the data is released. Sources disagree between CC BY 4.0 and
+      CC BY-NC-SA 4.0. See docs/DATA_LICENSES.md.
+    authors:
+      - name: "TODO(verify)"
+
+  - type: generic
+    title: A Drosophila computational brain model
+    notes: >-
+      Shiu et al. 2024, the leaky integrate-and-fire reference whose parameters
+      configs/sim.yaml borrows. TODO(verify) every borrowed parameter value
+      against the article; none has been checked yet.
+    authors:
+      - name: "TODO(verify)"

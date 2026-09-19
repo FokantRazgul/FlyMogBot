@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flymog"
+version = "0.1.0"
+description = "Rate a face through the eyes of a fruit fly brain (entertainment project)."
+readme = "README.md"
+# flyvis (the visual front end) requires >=3.9,<3.13, so we cannot use the open
+# "3.11+" range from the brief. Pinned to 3.11 as the lowest supported version.
+requires-python = ">=3.11,<3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "FlyMog contributors" }]
+
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "psutil>=5.9",
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+# Heavy, pulled in only where the real visual front end is needed. Kept out of CI.
+flyvis = ["flyvis>=1.2.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+flymog = "flymog.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flymog"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "B008",    # typer uses function calls in argument defaults by design
+    "RUF001",  # this project deliberately mixes Cyrillic and Latin text
+    "RUF002",
+    "RUF003",
+    # int(round(x)) is redundant on numpy >= 2, where round() returns a Python
+    # int, but not on numpy 1.26, which this project still supports. Keeping the
+    # cast is deliberate.
+    "RUF046",
+]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["flymog"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = false
+# Deliberately soft, per the brief: mypy must not block progress.
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "heavy: needs a GPU, the real connectome or downloaded weights; skipped in CI",
+]
+addopts = "-m 'not heavy'"

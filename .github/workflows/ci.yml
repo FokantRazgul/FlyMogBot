@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# The workflow uses no secrets and downloads no data: it runs on CPU, without a
+# bot token and without the connectome. Anything that needs a GPU, real data or
+# downloaded weights is marked `heavy` and excluded by the pytest config.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # flyvis caps the interpreter at <3.13, so those are the versions that
+        # matter. Testing both guards against drift between them.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Create the environment
+        run: |
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: Lint
+        run: .venv/bin/ruff check src tests
+
+      - name: Format
+        run: .venv/bin/ruff format --check src tests
+
+      - name: Type check
+        run: .venv/bin/mypy
+
+      - name: Tests
+        run: .venv/bin/pytest -q
