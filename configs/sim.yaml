@@ -1,0 +1,75 @@
+# FlyMog simulation configuration.
+#
+# TODO(verify) markers mean: the value comes from the project brief and has NOT
+# been checked against the primary source yet. The hosts that carry the primary
+# sources (zenodo.org, codex.flywire.ai) are blocked by this environment's egress
+# policy, so verification has to happen on the operator's machine. Do not treat
+# an unverified number as established.
+
+lif:
+  # Leaky integrate-and-fire parameters, in the style of Shiu et al. 2024.
+  # TODO(verify: Shiu et al. 2024, "A Drosophila computational brain model")
+  v_rest_mv: -52.0        # TODO(verify)
+  v_reset_mv: -52.0       # TODO(verify)
+  v_threshold_mv: -45.0   # TODO(verify)
+  tau_m_ms: 20.0          # TODO(verify)
+  tau_syn_ms: 5.0         # TODO(verify)
+  refractory_ms: 2.0      # TODO(verify)
+  synaptic_delay_ms: 1.8  # TODO(verify)
+  w_syn_mv: 0.275         # TODO(verify) per-synapse weight, signed by neurotransmitter
+
+  dt_ms: 0.2              # configurable 0.1-0.5 per the brief
+  window_ms: 200.0        # configurable 100-300 per the brief
+
+connectome:
+  # Edges with fewer synapses than this are dropped.
+  # TODO(verify) that >=5 is the threshold used by the reference model.
+  min_synapse_count: 5
+  # Neurotransmitter -> sign. ACh excitatory; GABA and Glu inhibitory.
+  # TODO(verify) against the reference model's own sign assignment.
+  excitatory_transmitters: ["acetylcholine", "ach"]
+  inhibitory_transmitters: ["gaba", "glutamate", "glu"]
+  # Transmitters with no agreed sign here are dropped rather than guessed.
+  unknown_transmitter_policy: "drop"
+
+regime:
+  # Filled in by `flymog sweep-regime`. Until then these are only starting points.
+  input_gain: 1.0
+  global_weight_scale: 1.0
+  target_rate_hz: [5.0, 50.0]
+  # Selection criterion: maximise participation ratio of the feature vector.
+  criterion: "participation_ratio"
+
+pruning:
+  # Keep only neurons reachable from the input cells within k hops.
+  enabled: false
+  k_hops: 5
+  # Full vs pruned graph must agree at least this well on feature-neuron rates.
+  equivalence_min_correlation: 0.99
+
+vision:
+  # flyvis hex lattice. 721 columns corresponds to extent 15.
+  hex_extent: 15
+  n_columns: 721
+  # Canonical framing, shared by fly renders and human faces (brief 5.1 / 5.6).
+  # The subject must occupy the same fraction of the field of view in both.
+  fov_fraction: 0.65
+  # flyvis is trained on naturalistic movies and is motion-tuned, so a single
+  # still frame mostly produces an onset transient. We present a short jittered
+  # sequence ("microsaccades") instead. Verified against the model in M0.
+  sequence:
+    n_frames: 20
+    fps: 50
+    jitter_px: 1.5
+    jitter_seed_from_image: true
+
+determinism:
+  # Same file must always give the same score (brief 5.4).
+  # Poisson seeds are derived from a hash of the preprocessed image.
+  seed_from_image_hash: true
+  n_trials: 1
+
+backend:
+  # auto | csr | gather. `auto` picks csr on CUDA and gather elsewhere.
+  kind: "auto"
+  dtype: "float32"
