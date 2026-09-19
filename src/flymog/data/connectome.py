@@ -12,14 +12,11 @@ to say so out loud rather than quietly report surrogate numbers as findings.
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import torch
 
-from flymog.config import ConnectomeConfig
 from flymog.sim.backends import BackendKind, SparseMatmul, build_backend
 
 # Column names we accept for each field, lowercased. FlyWire Codex exports and
