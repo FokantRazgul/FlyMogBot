@@ -62,23 +62,38 @@ uv pip install --python .venv/bin/python -e ".[flyvis]"
 Отчёт окажется в `docs/M0_REPORT.md`. Разделы, для которых нет JSON, будут
 помечены как незаполненные — это нормально и означает ровно то, что написано.
 
-## Ручная загрузка данных
+## Загрузка данных
 
-`flymog fetch-data` печатает, что именно нужно и куда положить. Кратко:
-
-| Файл | Куда | Откуда |
-|---|---|---|
-| Аннотации нейронов | `data/connectome/flywire_neurons.tsv` | репозиторий `flyconnectome/flywire_annotations`, файл `supplemental_files/Supplemental_file1_neuron_annotations.tsv` |
-| Таблица связей | `data/connectome/flywire_connections.csv` | Zenodo, запись FlyWire. **TODO(verify)** точный файл |
-| Веса flyvis | каталог результатов flyvis | см. документацию flyvis. **TODO(verify)** |
-
-Аннотации можно получить обычным git:
+Zenodo, Codex FlyWire, HuggingFace и Google Drive могут быть закрыты политикой
+сети. Но всё нужное, кроме весов flyvis, лежит на GitHub и берётся обычным git.
 
 ```bash
+# Связи и порядок нейронов (FlyWire v783, ~370 МБ вместе с историей)
+git clone --depth 1 https://github.com/philshiu/Drosophila_brain_model.git
+cp Drosophila_brain_model/Connectivity_783.parquet data/connectome/
+cp Drosophila_brain_model/Completeness_783.csv     data/connectome/
+
+# Аннотации: типы клеток, суперклассы, координаты
 git clone --depth 1 https://github.com/flyconnectome/flywire_annotations.git
 cp flywire_annotations/supplemental_files/Supplemental_file1_neuron_annotations.tsv \
    data/connectome/flywire_neurons.tsv
 ```
+
+Проверить, что всё на месте:
+
+```bash
+.venv/bin/flymog fetch-data
+```
+
+| Файл | Куда | Что даёт |
+|---|---|---|
+| `Connectivity_783.parquet` | `data/connectome/` | 15 091 983 связи со знаком; после порога ≥5 остаётся 2 700 513 |
+| `Completeness_783.csv` | `data/connectome/` | 138 639 нейронов, задаёт порядок индексов |
+| `flywire_neurons.tsv` | `data/connectome/` | типы клеток, суперклассы, координаты |
+| Веса flyvis | каталог результатов flyvis | **TODO(verify)**, хост был закрыт |
+
+Аннотаций одних достаточно для `probe-inputs` и `probe-bridge`; для `bench-sim`
+и `sweep-regime` нужны связи.
 
 Перед использованием прочитай `docs/DATA_LICENSES.md`: лицензия данных FlyWire
 на момент M0 **не установлена окончательно**.

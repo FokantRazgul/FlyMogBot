@@ -474,8 +474,11 @@ def build_m0_report(source: Path) -> tuple[str, list[str], list[str]]:
         parts.append("Все probe-команды отработали.")
     parts += [
         "",
-        "Отдельно: все параметры LIF в `configs/sim.yaml` помечены `TODO(verify)` и "
-        "не сверены с первоисточником. Это нужно закрыть до M1.",
+        "Параметры LIF сверены с кодом референсной реализации Shiu et al. "
+        "(значения и DOI переписаны из её `default_params`). Сами публикации по "
+        "этим DOI не читались, поэтому в `CITATION.cff` названия и авторы "
+        "остаются `TODO(verify)`. Лицензия данных FlyWire по-прежнему не "
+        "установлена, см. `docs/DATA_LICENSES.md`.",
         "",
     ]
     return "\n".join(parts), found, missing
