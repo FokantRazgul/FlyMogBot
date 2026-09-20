@@ -96,6 +96,7 @@ flymog m0-report                  # собрать docs/M0_REPORT.md из выв
 
 | Файл | О чём |
 |---|---|
+| [`docs/CHECKLIST.md`](docs/CHECKLIST.md) | **Пошаговая инструкция: что сделать на своей машине** |
 | [`docs/M0_REPORT.md`](docs/M0_REPORT.md) | Разведка: железо, данные, скорость, go/no-go |
 | [`docs/SCIENCE.md`](docs/SCIENCE.md) | Что здесь науки, а что мема. Честные абляции |
 | [`docs/DATA_LICENSES.md`](docs/DATA_LICENSES.md) | Лицензии и атрибуция данных |
