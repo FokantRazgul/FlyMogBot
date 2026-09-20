@@ -4,22 +4,28 @@ State is ``[n_neurons, batch]`` so a batch of images is simulated at once, and
 connectivity is applied through one of the sparse backends in
 :mod:`flymog.sim.backends`.
 
-Numerical convention, stated explicitly because the brief's parameters are not
-yet verified against the reference model:
+The dynamics follow the reference model of Shiu et al., whose implementation
+(philshiu/Drosophila_brain_model, MIT licensed) states them as::
 
-* Membrane and synaptic currents are expressed in millivolts. ``w_syn_mv`` is
-  the increment a single presynaptic spike adds to the postsynaptic synaptic
-  current, signed by the presynaptic neurotransmitter.
-* Both state variables are integrated exactly over a step, assuming the driving
-  term is constant within that step:
-  ``I <- I * exp(-dt/tau_syn)`` then ``I += w * spikes``, and
-  ``V <- v_rest + (V - v_rest) * exp(-dt/tau_m) + I_total * (1 - exp(-dt/tau_m))``.
-* A neuron spikes when ``V >= v_threshold``; it is then reset to ``v_reset`` and
-  clamped there for the refractory period.
+    dv/dt = (v_0 - v + g) / t_mbr   (unless refractory)
+    dg/dt = -g / tau                (unless refractory)
+    on spike:  v > v_th  ->  v = v_rst; g = 0 mV
+    on arrival of a presynaptic spike: g += w
 
-The absolute scale of ``w_syn_mv`` is calibrated by ``flymog sweep-regime`` via
-``regime.global_weight_scale``, so an error in its units shows up as a scale
-factor, not as silently wrong dynamics. See TODO(verify) in configs/sim.yaml.
+This module implements exactly that, with the two state variables integrated
+exactly over a step rather than by explicit Euler, which is what makes the
+single-cell firing rate checkable against a closed-form expression:
+
+* Both are in millivolts. ``w_syn_mv`` is the increment one presynaptic spike
+  adds to ``g``, scaled by the signed synapse count of the edge.
+* ``g <- g * exp(-dt/tau_syn)`` while not refractory, then ``g += w * spikes``.
+* ``v <- v_rest + (v - v_rest) * exp(-dt/tau_m) + drive * (1 - exp(-dt/tau_m))``.
+* Firing clears ``g`` as well as ``v``. A refractory cell integrates neither,
+  but still accumulates arriving spikes into ``g``.
+
+``w_syn_mv`` is a free parameter in the reference model, not a measured
+quantity. ``flymog sweep-regime`` calibrates its effective scale through
+``regime.global_weight_scale``.
 """
 
 from __future__ import annotations
@@ -116,20 +122,29 @@ class LifNetwork:
         arriving = self._delay_buffer[self._delay_pos]
         synaptic_input = self.connectivity(arriving) * (self.cfg.w_syn_mv * self.weight_scale)
 
-        self._i_syn = self._i_syn * self.alpha_syn + synaptic_input
+        in_refractory = self._refractory > 0
+
+        # In the reference model both differential equations carry
+        # "(unless refractory)", so the synaptic variable stops decaying while a
+        # cell is refractory, but incoming spikes still add to it.
+        decayed = torch.where(in_refractory, self._i_syn, self._i_syn * self.alpha_syn)
+        self._i_syn = decayed + synaptic_input
         drive = self._i_syn + external_current_mv
 
         v_rest = self.cfg.v_rest_mv
         v_new = v_rest + (self._v - v_rest) * self.alpha_m + drive * (1.0 - self.alpha_m)
 
-        # Refractory cells are held at reset and cannot integrate.
-        in_refractory = self._refractory > 0
+        # Refractory cells do not integrate; they sit at the reset potential.
         v_new = torch.where(in_refractory, torch.full_like(v_new, self.cfg.v_reset_mv), v_new)
 
-        spikes = (v_new >= self.cfg.v_threshold_mv) & ~in_refractory
+        # Strict inequality, matching the reference model's "v > v_th".
+        spikes = (v_new > self.cfg.v_threshold_mv) & ~in_refractory
         spikes_f = spikes.to(self.dtype)
 
+        # The reference reset rule is "v = v_rst; g = 0 * mV": firing clears the
+        # synaptic variable as well as the membrane potential.
         v_new = torch.where(spikes, torch.full_like(v_new, self.cfg.v_reset_mv), v_new)
+        self._i_syn = torch.where(spikes, torch.zeros_like(self._i_syn), self._i_syn)
         self._v = v_new
         self._refractory = torch.where(
             spikes,

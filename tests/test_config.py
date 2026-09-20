@@ -88,23 +88,44 @@ def test_fov_fraction_must_be_a_fraction():
         SimConfig.model_validate(raw)
 
 
-def test_unverified_parameters_are_marked_in_the_yaml():
-    """Every LIF parameter is unverified, and the file must say so.
+def test_lif_parameters_cite_their_source():
+    """Every LIF parameter must be traceable, not taken on trust.
 
-    This test exists so that removing a TODO(verify) marker is a deliberate act
-    recorded in a diff, not something that quietly rots away.
+    The values were checked against the reference implementation of Shiu et al.
+    This test fails if a parameter is added without a citation, or if one is
+    quietly changed away from the verified value.
     """
     text = (config_dir() / "sim.yaml").read_text(encoding="utf-8")
     lif_block = text.split("lif:")[1].split("\nconnectome:")[0]
-    for parameter in (
-        "v_rest_mv",
-        "v_reset_mv",
-        "v_threshold_mv",
-        "tau_m_ms",
-        "tau_syn_ms",
-        "refractory_ms",
-        "synaptic_delay_ms",
-        "w_syn_mv",
+
+    expected = {
+        "v_rest_mv": -52.0,
+        "v_reset_mv": -52.0,
+        "v_threshold_mv": -45.0,
+        "tau_m_ms": 20.0,
+        "tau_syn_ms": 5.0,
+        "refractory_ms": 2.2,
+        "synaptic_delay_ms": 1.8,
+        "w_syn_mv": 0.275,
+    }
+    cfg = load_sim_config().lif
+    for name, value in expected.items():
+        assert getattr(cfg, name) == pytest.approx(value), f"{name} drifted from the reference"
+
+    # The block must carry the sources those values came from.
+    for doi in (
+        "10.3389/fnbeh.2017.00008",
+        "10.1088/2634-4386/ac3ba6",
+        "10.7554/eLife.62362",
+        "10.3389/fncel.2015.00029",
     ):
-        line = next(ln for ln in lif_block.splitlines() if ln.strip().startswith(parameter))
-        assert "TODO(verify)" in line, f"{parameter} is presented as verified but is not"
+        assert doi in lif_block, f"source {doi} is missing from the LIF block"
+
+    # w_syn is a free parameter in the reference, and saying so matters more
+    # than the number itself.
+    assert "free parameter" in lif_block.lower()
+
+
+def test_refractory_period_is_the_reference_value_not_the_brief_approximation():
+    """The brief said about 2 ms; the reference model says 2.2 ms."""
+    assert load_sim_config().lif.refractory_ms == pytest.approx(2.2)

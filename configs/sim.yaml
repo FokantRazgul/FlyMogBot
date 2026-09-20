@@ -1,43 +1,63 @@
 # FlyMog simulation configuration.
 #
-# TODO(verify) markers mean: the value comes from the project brief and has NOT
-# been checked against the primary source yet. The hosts that carry the primary
-# sources (zenodo.org, codex.flywire.ai) are blocked by this environment's egress
-# policy, so verification has to happen on the operator's machine. Do not treat
-# an unverified number as established.
+# The LIF parameters below were verified against the reference implementation
+# of Shiu et al. (philshiu/Drosophila_brain_model, MIT licensed), which is the
+# model the brief points to. Each carries the source that implementation cites.
+# `w_syn_mv` is the one exception: the reference marks it a free parameter, not
+# a measured quantity, so it is calibrated here rather than taken on authority.
 
 lif:
-  # Leaky integrate-and-fire parameters, in the style of Shiu et al. 2024.
-  # TODO(verify: Shiu et al. 2024, "A Drosophila computational brain model")
-  v_rest_mv: -52.0        # TODO(verify)
-  v_reset_mv: -52.0       # TODO(verify)
-  v_threshold_mv: -45.0   # TODO(verify)
-  tau_m_ms: 20.0          # TODO(verify)
-  tau_syn_ms: 5.0         # TODO(verify)
-  refractory_ms: 2.0      # TODO(verify)
-  synaptic_delay_ms: 1.8  # TODO(verify)
-  w_syn_mv: 0.275         # TODO(verify) per-synapse weight, signed by neurotransmitter
+  # Leaky integrate-and-fire parameters, as in Shiu et al.
+  # Verified against default_params in the reference model.py.
+
+  # Kakaria and de Bivort 2017, doi:10.3389/fnbeh.2017.00008
+  v_rest_mv: -52.0        # reference v_0
+  v_reset_mv: -52.0       # reference v_rst
+  v_threshold_mv: -45.0   # reference v_th
+  tau_m_ms: 20.0          # reference t_mbr
+
+  # Jürgensen et al., doi:10.1088/2634-4386/ac3ba6
+  tau_syn_ms: 5.0         # reference tau
+
+  # Lazar et al., doi:10.7554/eLife.62362
+  # Note: 2.2 ms, not the 2 ms the brief gave as an approximation.
+  refractory_ms: 2.2      # reference t_rfc
+
+  # Paul et al. 2015, doi:10.3389/fncel.2015.00029
+  synaptic_delay_ms: 1.8  # reference t_dly
+
+  # Free parameter in the reference model, NOT measured. Calibrated through
+  # regime.global_weight_scale below.
+  w_syn_mv: 0.275         # reference w_syn
 
   dt_ms: 0.2              # configurable 0.1-0.5 per the brief
   window_ms: 200.0        # configurable 100-300 per the brief
 
 connectome:
-  # Edges with fewer synapses than this are dropped.
-  # TODO(verify) that >=5 is the threshold used by the reference model.
+  # Edges with fewer synapses than this are dropped. Verified: on FlyWire v783
+  # this leaves 2,700,513 of 15,091,983 edges.
   min_synapse_count: 5
   # Neurotransmitter -> sign. ACh excitatory; GABA and Glu inhibitory.
-  # TODO(verify) against the reference model's own sign assignment.
+  # The reference distribution ships a precomputed signed synapse count, which
+  # is used directly when present; these names cover the annotation-only path.
   excitatory_transmitters: ["acetylcholine", "ach"]
   inhibitory_transmitters: ["gaba", "glutamate", "glu"]
   # Transmitters with no agreed sign here are dropped rather than guessed.
   unknown_transmitter_policy: "drop"
 
 regime:
-  # Filled in by `flymog sweep-regime`. Until then these are only starting points.
-  input_gain: 1.0
-  global_weight_scale: 1.0
+  # Filled in by `flymog sweep-regime`. Until then these are only starting
+  # points. The reference model drives its inputs with Poisson spikes at 150 Hz
+  # scaled by a factor of 250, which is a useful order of magnitude.
+  # Set by `flymog sweep-regime` on the real connectome (138639 neurons).
+  # Caveat: the participation-ratio criterion was saturated at that batch, so
+  # this point is the lowest-rate one inside the 5-50 Hz band rather than a
+  # genuinely ranked optimum. See docs/SCIENCE.md.
+  input_gain: 10.0
+  global_weight_scale: 0.001
   target_rate_hz: [5.0, 50.0]
   # Selection criterion: maximise participation ratio of the feature vector.
+  # Watch the saturation warning: PR cannot exceed the batch size minus one.
   criterion: "participation_ratio"
 
 pruning:
@@ -56,7 +76,7 @@ vision:
   fov_fraction: 0.65
   # flyvis is trained on naturalistic movies and is motion-tuned, so a single
   # still frame mostly produces an onset transient. We present a short jittered
-  # sequence ("microsaccades") instead. Verified against the model in M0.
+  # sequence ("microsaccades") instead.
   sequence:
     n_frames: 20
     fps: 50
