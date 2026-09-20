@@ -44,13 +44,19 @@ class DataSource:
 KNOWN_SOURCES: tuple[DataSource, ...] = (
     DataSource(
         key="flywire_connectivity",
-        filename="flywire_connections.csv",
-        url="https://zenodo.org/records/10676866",
+        filename="Connectivity_783.parquet",
+        url="https://github.com/philshiu/Drosophila_brain_model",
         description=(
-            "FlyWire FAFB adult brain connectivity (neuron pairs with synapse counts "
-            "and predicted neurotransmitters). TODO(verify) the exact file and release."
+            "FlyWire v783 connectivity as distributed with the reference model: "
+            "Connectivity_783.parquet plus Completeness_783.csv. Verified to hold "
+            "15,091,983 edges over 138,639 neurons, with a precomputed signed "
+            "synapse count. Clonable over git, unlike the Zenodo record."
         ),
-        license_note="TODO(verify): sources disagree between CC BY 4.0 and CC BY-NC-SA 4.0.",
+        license_note=(
+            "The repository is MIT licensed (Shiu and Spiller, 2023), but that "
+            "covers the code. The FlyWire data it redistributes carries FlyWire's "
+            "own terms. TODO(verify) those terms."
+        ),
     ),
     DataSource(
         key="flywire_annotations",
@@ -321,6 +327,124 @@ def load_connectome_from_csv(
     )
 
 
+def load_reference_connectome(
+    completeness_csv: Path,
+    connectivity_parquet: Path,
+    cfg: ConnectomeConfig,
+    *,
+    annotations: Path | None = None,
+) -> Connectome:
+    """Load the connectome in the format the reference model distributes.
+
+    ``Completeness_783.csv`` is indexed by root id and fixes the neuron order;
+    ``Connectivity_783.parquet`` carries presynaptic and postsynaptic indices
+    into that order, a synapse count, and a precomputed signed count.
+
+    The sign is taken from that precomputed column rather than re-derived from
+    neurotransmitter names: it is what the reference model itself simulates, so
+    re-deriving it would risk disagreeing with the published behaviour.
+
+    Cell types and positions are not in these two files. When ``annotations`` is
+    given they are joined on root id; neurons with no annotation keep empty
+    strings rather than being dropped, since they still carry connectivity.
+    """
+    import pandas as pd
+
+    completeness = pd.read_csv(completeness_csv, index_col=0)
+    neuron_ids = completeness.index.to_numpy(dtype=np.int64)
+    n_neurons = len(neuron_ids)
+
+    edges = pd.read_parquet(connectivity_parquet)
+    required = {"Presynaptic_Index", "Postsynaptic_Index", "Connectivity"}
+    missing = required - set(edges.columns)
+    if missing:
+        raise ConnectomeDataMissing(
+            f"{connectivity_parquet} lacks columns {sorted(missing)}; found {list(edges.columns)}"
+        )
+
+    total_edges = len(edges)
+    keep = edges["Connectivity"].to_numpy() >= cfg.min_synapse_count
+    edges = edges[keep]
+
+    syn_count = edges["Connectivity"].to_numpy().astype(np.int64)
+    if "Excitatory x Connectivity" in edges.columns:
+        signed = edges["Excitatory x Connectivity"].to_numpy().astype(np.float64)
+        sign = np.sign(signed)
+    elif "Excitatory" in edges.columns:
+        sign = np.sign(edges["Excitatory"].to_numpy().astype(np.float64))
+    else:
+        raise ConnectomeDataMissing(
+            f"{connectivity_parquet} carries no sign column; expected "
+            "'Excitatory x Connectivity' or 'Excitatory'"
+        )
+
+    cell_types = np.full(n_neurons, "", dtype=object)
+    super_classes = np.full(n_neurons, "", dtype=object)
+    transmitters = np.full(n_neurons, "", dtype=object)
+    positions: np.ndarray | None = None
+    n_annotated = 0
+
+    if annotations is not None and annotations.exists():
+        table = _read_annotation_frame(annotations)
+        position_of = {int(v): i for i, v in enumerate(neuron_ids)}
+        rows = table["root_id"].to_numpy(dtype=np.int64)
+        target = np.array([position_of.get(int(r), -1) for r in rows], dtype=np.int64)
+        found = target >= 0
+        idx = target[found]
+        n_annotated = int(found.sum())
+
+        for column, destination in (
+            ("cell_type", cell_types),
+            ("super_class", super_classes),
+        ):
+            if column in table.columns:
+                values = table[column].fillna("").to_numpy(dtype=object)[found]
+                destination[idx] = values
+        for column in ("top_nt", "nt_type", "neurotransmitter"):
+            if column in table.columns:
+                transmitters[idx] = table[column].fillna("").to_numpy(dtype=object)[found]
+                break
+        if {"pos_x", "pos_y", "pos_z"} <= set(table.columns):
+            positions = np.full((n_neurons, 3), np.nan, dtype=np.float64)
+            coords = table[["pos_x", "pos_y", "pos_z"]].to_numpy(dtype=np.float64)[found]
+            positions[idx] = coords
+
+    return Connectome(
+        neuron_ids=neuron_ids,
+        cell_types=cell_types,
+        super_classes=super_classes,
+        transmitters=transmitters,
+        positions=positions,
+        pre_idx=edges["Presynaptic_Index"].to_numpy().astype(np.int64),
+        post_idx=edges["Postsynaptic_Index"].to_numpy().astype(np.int64),
+        syn_count=syn_count,
+        sign=sign,
+        source=str(connectivity_parquet.parent),
+        version=connectivity_parquet.stem,
+        is_surrogate=False,
+        meta={
+            "format": "reference (Shiu et al.) distribution",
+            "edges_before_threshold": total_edges,
+            "edges_after_threshold": int(len(syn_count)),
+            "min_synapse_count": cfg.min_synapse_count,
+            "sign_source": "precomputed in the distributed file, not re-derived",
+            "n_neurons_with_annotations": n_annotated,
+        },
+    )
+
+
+def _read_annotation_frame(path: Path):
+    """Read the annotation table, keeping only the columns we use."""
+    import pandas as pd
+
+    wanted = ["root_id", "cell_type", "super_class", "top_nt", "pos_x", "pos_y", "pos_z"]
+    header = pd.read_csv(path, sep=_delimiter_for(path), nrows=0)
+    usecols = [c for c in wanted if c in header.columns]
+    if "root_id" not in usecols:
+        raise ConnectomeDataMissing(f"{path} has no root_id column; found {list(header.columns)}")
+    return pd.read_csv(path, sep=_delimiter_for(path), usecols=usecols)
+
+
 def make_surrogate_connectome(
     n_neurons: int = 140_000,
     n_edges: int = 2_700_000,
@@ -429,13 +553,18 @@ def ensure_connectome(
     is how benchmarks run in an environment that cannot reach the data.
     """
     target_dir = target_dir or (data_dir() / "connectome")
-    neurons = _first_existing(target_dir, ("flywire_neurons.tsv", "flywire_neurons.csv"))
+    annotations = find_annotations(target_dir)
+
+    completeness = _first_existing(target_dir, ("Completeness_783.csv", "completeness.csv"))
+    parquet = _first_existing(target_dir, ("Connectivity_783.parquet", "connectivity.parquet"))
+    if completeness is not None and parquet is not None:
+        return load_reference_connectome(completeness, parquet, cfg, annotations=annotations)
+
     connections = _first_existing(
         target_dir, ("flywire_connections.csv", "flywire_connections.tsv")
     )
-
-    if neurons is not None and connections is not None:
-        return load_connectome_from_csv(neurons, connections, cfg)
+    if annotations is not None and connections is not None:
+        return load_connectome_from_csv(annotations, connections, cfg)
 
     if allow_surrogate:
         return make_surrogate_connectome(cfg=cfg)

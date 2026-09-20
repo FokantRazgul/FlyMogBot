@@ -66,6 +66,7 @@ def _load_connectome(
     from flymog.data.connectome import ConnectomeDataMissing
     from flymog.data.download import (
         ensure_connectome,
+        find_annotations,
         load_neuron_table,
         make_surrogate_connectome,
     )
@@ -74,6 +75,20 @@ def _load_connectome(
     if annotations is not None:
         console.print(f"Loading neuron annotations only from {annotations}")
         return load_neuron_table(annotations, cfg.connectome)
+    if not surrogate:
+        # Prefer the full connectome when it is available, so probe numbers
+        # describe the network that is actually simulated. Fall back to the
+        # annotation table alone, which is enough for the annotation-only
+        # probes and is a far smaller download.
+        try:
+            return ensure_connectome(cfg.connectome, allow_surrogate=False)
+        except ConnectomeDataMissing as exc:
+            fallback = find_annotations()
+            if fallback is None:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=2) from exc
+            console.print(f"Full connectome not found; using annotations only from {fallback}")
+            return load_neuron_table(fallback, cfg.connectome)
     if surrogate:
         console.print(
             f"[yellow]Using the synthetic surrogate connectome "
@@ -171,11 +186,8 @@ def probe_inputs(
     output: Annotated[Path | None, typer.Option()] = None,
 ) -> None:
     """Check which input-cell rung of the ladder the connectome supports."""
-    from flymog.data.download import find_annotations
     from flymog.probes.inputs import probe_input_cells
 
-    if annotations is None and not surrogate:
-        annotations = find_annotations()
     connectome = _load_connectome(surrogate, surrogate_neurons, surrogate_edges, annotations)
     payload = probe_input_cells(connectome)
     _warn_if_surrogate(payload)
@@ -217,11 +229,8 @@ def probe_bridge_cmd(
     output: Annotated[Path | None, typer.Option()] = None,
 ) -> None:
     """Measure how well flyvis cell types map onto FlyWire annotations."""
-    from flymog.data.download import find_annotations
     from flymog.probes.bridge import probe_bridge
 
-    if annotations is None and not surrogate:
-        annotations = find_annotations()
     connectome = _load_connectome(surrogate, surrogate_neurons, surrogate_edges, annotations)
     types = None
     if flyvis_types_file is not None:
@@ -303,7 +312,25 @@ def bench_sim(
     console.print(f"[bold]{payload['verdict']}[/bold]")
 
     if check_pruning:
-        seeds = np.arange(min(2000, connectome.n_neurons // 10))
+        # Seed the reachability walk from the real input cells where the
+        # annotations name them. An arbitrary slice of neuron indices would
+        # measure nothing about the pathway the model actually uses.
+        from flymog.probes.inputs import RUNGS, _matching_indices
+
+        seeds = np.asarray([], dtype=np.int64)
+        for name, patterns, _ in RUNGS:
+            matches = _matching_indices(connectome, patterns)
+            found = [v for v in matches.values() if len(v)]
+            if found:
+                seeds = np.unique(np.concatenate(found))
+                console.print(f"pruning seeds: {len(seeds)} cells from the '{name}' rung")
+                break
+        if seeds.size == 0:
+            seeds = np.arange(min(2000, connectome.n_neurons // 10))
+            console.print(
+                "[yellow]no input cells found in the annotations; "
+                "seeding pruning from an arbitrary slice instead[/yellow]"
+            )
         payload["pruning"] = pruning_equivalence(connectome, cfg.lif, seeds, k_hops=k_hops, batch=4)
         pruning = payload["pruning"]
         console.print(
